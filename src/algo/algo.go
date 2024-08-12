@@ -867,6 +867,96 @@ func ExactMatchNaive(caseSensitive bool, normalize bool, forward bool, text *uti
 	return Result{-1, -1, 0}, nil
 }
 
+// Similar to ExactMatchNaive but for whole words
+func ExactMatchWord(caseSensitive bool, normalize bool, forward bool, text *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	if len(pattern) == 0 {
+		return Result{0, 0, 0}, nil
+	}
+
+	lenRunes := text.Length()
+	lenPattern := len(pattern)
+
+	if lenRunes < lenPattern {
+		return Result{-1, -1, 0}, nil
+	}
+
+	idx, _ := asciiFuzzyIndex(text, pattern, caseSensitive)
+	if idx < 0 {
+		return Result{-1, -1, 0}, nil
+	}
+
+	// For simplicity, only look at the bonus at the first character position
+	pidx := 0
+    wordBegin := true
+	bestPos, bonus, bestBonus := -1, int16(0), int16(-1)
+	for index := 0; index < lenRunes; index++ {
+		index_ := indexAt(index, lenRunes, forward)
+		char := text.Get(index_)
+		if !caseSensitive {
+			if char >= 'A' && char <= 'Z' {
+				char += 32
+			} else if char > unicode.MaxASCII {
+				char = unicode.To(unicode.LowerCase, char)
+			}
+		}
+		if normalize {
+			char = normalizeRune(char)
+		}
+		pidx_ := indexAt(pidx, lenPattern, forward)
+		pchar := pattern[pidx_]
+		if pchar == char && wordBegin {
+			if pidx_ == 0 {
+				bonus = bonusAt(text, index_)
+			}
+			pidx++
+			if pidx == lenPattern {
+                wordEnd := true
+                if index < (lenRunes - 1) {
+                    nextChar := text.Get(indexAt(index + 1, lenRunes, forward))
+                    if (nextChar >= 'a' && nextChar <= 'z') ||
+                       (nextChar >= 'A' && nextChar <= 'Z') ||
+                       (nextChar >= '0' && nextChar <= '9') || nextChar == '_' {
+                    wordEnd = false
+                    }
+                }
+                if wordEnd {
+                    if bonus > bestBonus {
+                        bestPos, bestBonus = index, bonus
+                    }
+                    if bonus >= bonusBoundary {
+                        break
+                    }
+				}
+				index -= pidx - 1
+				pidx, bonus = 0, 0
+			}
+		} else {
+            if (char >= 'a' && char <= 'z') ||
+               (char >= 'A' && char <= 'Z') ||
+               (char >= '0' && char <= '9') || char == '_' {
+                   wordBegin = false
+            } else {
+                   wordBegin = true
+            }
+			index -= pidx
+			pidx, bonus = 0, 0
+		}
+	}
+	if bestPos >= 0 {
+		var sidx, eidx int
+		if forward {
+			sidx = bestPos - lenPattern + 1
+			eidx = bestPos + 1
+		} else {
+			sidx = lenRunes - (bestPos + 1)
+			eidx = lenRunes - (bestPos - lenPattern + 1)
+		}
+		score, _ := calculateScore(caseSensitive, normalize, text, pattern, sidx, eidx, false)
+		return Result{sidx, eidx, score}, nil
+	}
+	return Result{-1, -1, 0}, nil
+}
+
 // PrefixMatch performs prefix-match
 func PrefixMatch(caseSensitive bool, normalize bool, forward bool, text *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
 	if len(pattern) == 0 {

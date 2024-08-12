@@ -26,6 +26,7 @@ const (
 	termPrefix
 	termSuffix
 	termEqual
+	termWord
 )
 
 type term struct {
@@ -106,7 +107,7 @@ func BuildPattern(cache *ChunkCache, patternCache map[string]*Pattern, fuzzy boo
 				}
 				// If the query contains inverse search terms or OR operators,
 				// we cannot cache the search scope
-				if !cacheable || idx > 0 || term.inv || fuzzy && term.typ != termFuzzy || !fuzzy && term.typ != termExact {
+				if !cacheable || idx > 0 || term.inv || fuzzy && term.typ != termFuzzy || !fuzzy && term.typ != termExact && term.typ != termWord  {
 					cacheable = false
 					if sortable {
 						// Can't break until we see at least one non-inverse term
@@ -147,6 +148,7 @@ func BuildPattern(cache *ChunkCache, patternCache map[string]*Pattern, fuzzy boo
 	ptr.procFun[termFuzzy] = fuzzyAlgo
 	ptr.procFun[termEqual] = algo.EqualMatch
 	ptr.procFun[termExact] = algo.ExactMatchNaive
+	ptr.procFun[termWord] = algo.ExactMatchWord
 	ptr.procFun[termPrefix] = algo.PrefixMatch
 	ptr.procFun[termSuffix] = algo.SuffixMatch
 
@@ -193,7 +195,15 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 			text = text[:len(text)-1]
 		}
 
-		if strings.HasPrefix(text, "'") {
+		if strings.HasPrefix(text, "\"") {
+			// Flip exactness
+			if fuzzy && !inv {
+				typ = termWord
+			} else {
+				typ = termFuzzy
+			}
+			text = text[1:]
+		} else if strings.HasPrefix(text, "'") {
 			// Flip exactness
 			if fuzzy && !inv {
 				typ = termExact
@@ -253,7 +263,7 @@ func (p *Pattern) buildCacheKey() string {
 	}
 	cacheableTerms := []string{}
 	for _, termSet := range p.termSets {
-		if len(termSet) == 1 && !termSet[0].inv && (p.fuzzy || termSet[0].typ == termExact) {
+		if len(termSet) == 1 && !termSet[0].inv && (p.fuzzy || termSet[0].typ == termExact || termSet[0].typ == termWord) {
 			cacheableTerms = append(cacheableTerms, string(termSet[0].text))
 		}
 	}
