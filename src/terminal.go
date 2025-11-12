@@ -56,12 +56,16 @@ var offsetComponentRegex *regexp.Regexp
 var offsetTrimCharsRegex *regexp.Regexp
 var passThroughBeginRegex *regexp.Regexp
 var passThroughEndTmuxRegex *regexp.Regexp
+var custEnvRegex *regexp.Regexp
 var ttyin *os.File
 
 const clearCode string = "\x1b[2J"
 
 // Number of maximum focus events to process synchronously
 const maxFocusEvents = 10000
+
+// Number of maximum custom environment variables
+const maxCustomEnvVars = 100
 
 // execute-silent and transform* actions will block user input for this duration.
 // After this duration, users can press CTRL-C to terminate the command.
@@ -87,6 +91,7 @@ func init() {
 	*/
 	passThroughBeginRegex = regexp.MustCompile(`\x1bPtmux;\x1b\x1b|\x1b(_G|P[0-9;]*q)|\x1b]1337;`)
 	passThroughEndTmuxRegex = regexp.MustCompile(`[^\x1b]\x1b\\`)
+	custEnvRegex = regexp.MustCompile(`(?m)^(?:FZF_CUSTOM_)?(\w+)=(.*)$`)
 }
 
 type jumpMode int
@@ -436,6 +441,7 @@ type Terminal struct {
 	proxyScript        string
 	numLinesCache      map[int32]numLinesCacheValue
 	raw                bool
+	customEnv          map[string]string
 }
 
 type numLinesCacheValue struct {
@@ -549,6 +555,7 @@ const (
 	actChangePreviewWindow
 	actChangePrompt
 	actChangeQuery
+	actChangeCustom
 
 	actClearScreen
 	actClearQuery
@@ -618,6 +625,7 @@ const (
 	actTransform
 	actTransformBorderLabel
 	actTransformGhost
+	actTransformCustom
 	actTransformHeader
 	actTransformFooter
 	actTransformHeaderLabel
@@ -701,6 +709,7 @@ func processExecution(action actionType) bool {
 	case actTransform,
 		actTransformBorderLabel,
 		actTransformGhost,
+		actTransformCustom,
 		actTransformHeader,
 		actTransformFooter,
 		actTransformHeaderLabel,
@@ -1111,6 +1120,7 @@ func NewTerminal(opts *Options, eventBox *util.EventBox, executor *util.Executor
 		executing:          util.NewAtomicBool(false),
 		lastAction:         actStart,
 		lastFocus:          minItem.Index(),
+		customEnv:          make(map[string]string),
 		numLinesCache:      make(map[int32]numLinesCacheValue)}
 	if opts.AcceptNth != nil {
 		t.acceptNth = opts.AcceptNth(t.delimiter)
@@ -1366,6 +1376,9 @@ func (t *Terminal) environImpl(forPreview bool) []string {
 		env = append(env, "FZF_PREVIEW_"+columns)
 		env = append(env, fmt.Sprintf("FZF_PREVIEW_TOP=%d", t.tui.Top()+t.pwindow.Top()))
 		env = append(env, fmt.Sprintf("FZF_PREVIEW_LEFT=%d", t.pwindow.Left()))
+	}
+	for custKey, custValue := range t.customEnv {
+		env = append(env, fmt.Sprintf("FZF_CUSTOM_%s=%s", custKey, custValue))
 	}
 
 	return env
@@ -6879,6 +6892,22 @@ func (t *Terminal) Loop() error {
 					t.ghost = ghost
 					if len(t.input) == 0 {
 						req(reqPrompt)
+					}
+				})
+			case actChangeCustom, actTransformCustom:
+				capture(false, func(custom string) {
+					matches := custEnvRegex.FindAllSubmatch([]byte(custom), maxCustomEnvVars)
+					for _, match := range matches {
+						key := string(match[1])
+						value := string(match[2])
+						if len(value) > 0 {
+							_, exists := t.customEnv[key]
+							if exists || len(t.customEnv) < maxCustomEnvVars {
+								t.customEnv[key] = value
+							}
+						} else {
+							delete(t.customEnv, key)
+						}
 					}
 				})
 			case actChangePointer, actTransformPointer, actBgTransformPointer:
