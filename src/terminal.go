@@ -442,6 +442,7 @@ type Terminal struct {
 	numLinesCache      map[int32]numLinesCacheValue
 	raw                bool
 	customEnv          map[string]string
+	lastCmd            map[actionType]string
 }
 
 type numLinesCacheValue struct {
@@ -1121,6 +1122,7 @@ func NewTerminal(opts *Options, eventBox *util.EventBox, executor *util.Executor
 		lastAction:         actStart,
 		lastFocus:          minItem.Index(),
 		customEnv:          make(map[string]string),
+		lastCmd:            make(map[actionType]string),
 		numLinesCache:      make(map[int32]numLinesCacheValue)}
 	if opts.AcceptNth != nil {
 		t.acceptNth = opts.AcceptNth(t.delimiter)
@@ -5706,6 +5708,16 @@ func (t *Terminal) Loop() error {
 			return true
 		}
 		doAction = func(a *action) bool {
+			if a.t == actReload ||
+				(a.t >= actTransform && a.t < actTrigger) ||
+				(a.t >= actBgTransform && a.t < actBgCancel) {
+					if len(a.a) > 0 {
+						t.lastCmd[a.t] = a.a
+					} else if _, exists := t.lastCmd[a.t]; exists {
+						a.a = t.lastCmd[a.t]
+					}
+			}
+
 			// Keep track of the current query before the action is executed,
 			// so we can restore it when the input section is hidden (--no-input).
 			// * By doing this, we don't have to add a conditional branch to each
